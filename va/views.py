@@ -1,30 +1,29 @@
 from rest_framework.permissions import IsAuthenticated
 from django.conf import settings
+from rest_framework_simplejwt.views import TokenObtainPairView
 from django.core import serializers
 from django.http import JsonResponse
-from django.db.models import Q
-from itertools import chain
 from rest_framework.generics import ListAPIView, RetrieveAPIView, CreateAPIView, UpdateAPIView, DestroyAPIView
 from rest_framework import generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.status import HTTP_200_OK, HTTP_400_BAD_REQUEST
 from va.models import (
-    Post,
     UserAccount,
-    Cpu,
-    Gpu,
-    Ram,
-    OrderItem,
 )
 from va.serializers import (
-    postSerializer,
     RegisterSerializer,
     UserSerializer,
-    cpuSerializer,
-    gpuSerializer,
-    ramSerializer,
+    MyTokenObtainPairSerializer,
+    UserEditSerializer,
+    UserEditNameSerializer,
+    UserEditEmailSerializer,
+    ChangePasswordSerializer,
 )
+
+
+class MyTokenObtainPairView(TokenObtainPairView):
+    serializer_class = MyTokenObtainPairSerializer
 
 
 class RegisterApi(generics.GenericAPIView):
@@ -41,67 +40,64 @@ class RegisterApi(generics.GenericAPIView):
 
 
 class GetUserView(RetrieveAPIView):
+    permission_classes = [IsAuthenticated]
     queryset = UserAccount.objects.all()
     serializer_class = UserSerializer
 
 
-class PostListView(ListAPIView):
-    queryset = Post.objects.all()
-    serializer_class = postSerializer
-
-
-class PostCreateView(CreateAPIView):
+class UserUpdateView(UpdateAPIView):
     permission_classes = [IsAuthenticated]
-    queryset = Post.objects.all()
-    serializer_class = postSerializer
+    queryset = UserAccount.objects.all()
+    serializer_class = UserEditSerializer
 
 
-class PostUpdateView(UpdateAPIView):
+class UserNameUpdateView(UpdateAPIView):
     permission_classes = [IsAuthenticated]
-    queryset = Post.objects.all()
-    serializer_class = postSerializer
+    queryset = UserAccount.objects.all()
+    serializer_class = UserEditNameSerializer
 
 
-class PostDeleteView(DestroyAPIView):
+class UserEmailUpdateView(UpdateAPIView):
     permission_classes = [IsAuthenticated]
-    queryset = Post.objects.all()
+    queryset = UserAccount.objects.all()
+    serializer_class = UserEditEmailSerializer
 
 
-class SearchView(APIView):
+class ChangePasswordView(generics.UpdateAPIView):
+    """
+    An endpoint for changing password.
+    """
+    serializer_class = ChangePasswordSerializer
+    model = UserAccount
+    permission_classes = (IsAuthenticated,)
+
+    def get_object(self, queryset=None):
+        obj = self.request.user
+        return obj
+
+    def update(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+
+        if serializer.is_valid():
+            # Check old password
+            if not self.object.check_password(serializer.data.get("old_password")):
+                return Response({"old_password": ["Wrong password."]}, status=HTTP_400_BAD_REQUEST)
+            # set_password also hashes the password that the user will get
+            self.object.set_password(serializer.data.get("new_password"))
+            self.object.save()
+            response = {
+                'status': 'success',
+                'code': HTTP_200_OK,
+                'message': 'Password updated successfully',
+                'data': []
+            }
+
+            return Response(response)
+
+        return Response(serializer.errors, status=HTTP_400_BAD_REQUEST)
+
+
+class UserDeleteView(DestroyAPIView):
     permission_classes = [IsAuthenticated]
-
-    def post(self, request, *args, **kwargs):
-        slug = request.data.get('slug')
-        if slug is None:
-            return Response({"message": "Invalid request"}, status=HTTP_400_BAD_REQUEST)
-
-        cpu = Cpu.objects.search(slug)
-        gpu = Gpu.objects.search(slug)
-        ram = Ram.objects.search(slug)
-        queryset_chain = chain(
-            cpu,
-            gpu,
-            ram
-        )
-        qs = sorted(queryset_chain,
-                    key=lambda instance: instance.pk,
-                    reverse=True)
-        self.count = len(qs)  # since qs is actually a list
-        for q in qs:
-            order_item_qs = OrderItem.objects.filter(
-                object_id=q.id,
-                user=request.user,
-            )
-            if order_item_qs.exists():
-                order_item = order_item_qs.first()
-                order_item.quantity += 1
-                order_item.save()
-            else:
-                order_item = OrderItem.objects.create(
-                    content_object=q,
-                    user=request.user,
-                )
-                order_item.save()
-
-        return JsonResponse(serializers.serialize('json', qs), safe=False)
-        # return Response(status=HTTP_200_OK)
+    queryset = UserAccount.objects.all()
